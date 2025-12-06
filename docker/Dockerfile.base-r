@@ -14,7 +14,11 @@ ARG PYTHON_VER=3.10
 ENV PYTHON_VER=$PYTHON_VER
 ARG VENV_NAME="r-env"
 ENV VENV_NAME=$VENV_NAME
-ARG QUARTO_VERSION=1.5.43
+ARG RUFF_VER="0.14.0"
+ENV RUFF_VER=$RUFF_VER
+ARG REQUIREMENTS="requirements-base.txt"
+ENV REQUIREMENTS=$REQUIREMENTS
+ARG QUARTO_VERSION=1.8.26
 ENV QUARTO_VERSION=$QUARTO_VERSION
 ENV TZ=UTC
 ENV DEBIAN_FRONTEND=noninteractive
@@ -27,17 +31,14 @@ ENV R_PROFILE_USER="/root/.Rprofile"
 ENV TERM_PROGRAM="vscode"
 ENV VSCODE_INIT_R="R/session/init.R"
 
-# Create a directory for packages builds
-RUN mkdir pkgs
-
-COPY setting_files/install_debian.sh pkgs/
+COPY setting_files/install_debian.sh tmp/
 
 # Install Debian dependencies
-RUN bash pkgs/install_debian.sh 
+RUN bash tmp/install_debian.sh 
 
 # Install CLI tools
-COPY setting_files/install_cli_tools.sh pkgs/
-RUN bash pkgs/install_cli_tools.sh
+COPY setting_files/install_cli_tools.sh tmp/
+RUN bash tmp/install_cli_tools.sh
 
 # Installing R
 RUN wget https://cran.rstudio.com/src/base/R-${R_VERSION_MAJOR}/R-${R_VERSION_MAJOR}.${R_VERSION_MINOR}.${R_VERSION_PATCH}.tar.gz && \
@@ -54,18 +55,17 @@ RUN locale-gen en_US.UTF-8
 
 WORKDIR /
 
-COPY setting_files/install_python.sh setting_files/requirements.txt pkgs/
-RUN bash pkgs/install_python.sh $VENV_NAME
+COPY setting_files/install_quarto.sh tmp/
+RUN bash tmp/install_quarto.sh $QUARTO_VERSION
+
+COPY setting_files/*.R setting_files/*.json tmp/
+RUN mv tmp/packages_vscode.json tmp/packages.json
+RUN Rscript tmp/install_packages.R
+RUN rm -rf tmp/*.*
 
 
-COPY setting_files/install_quarto.sh pkgs/
-RUN bash pkgs/install_quarto.sh $QUARTO_VERSION
-
-COPY setting_files/*.R setting_files/*.json pkgs/
-RUN mv pkgs/packages_vscode.json pkgs/packages.json
-RUN Rscript pkgs/install_packages.R
-RUN rm pkgs/*.*
-
+COPY setting_files/install_uv.sh setting_files/$REQUIREMENTS tmp/
+RUN bash tmp/install_uv.sh
 
 COPY setting_files/.Rprofile root/
 RUN echo "alias r='radian'" >> ~/.zshrc

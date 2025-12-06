@@ -1,4 +1,8 @@
 {
+    "workbench.colorTheme": "Visual Studio Dark",
+    "workbench.fontAliasing": "antialiased",
+    "editor.fontSize": 12,
+    "terminal.integrated.fontSize": 12,
     "r.alwaysUseActiveTerminal": true,
     "r.bracketedPaste": true,
     "r.sessionWatcher": true,
@@ -9,6 +13,5 @@
         "--no-save",
         "--no-restore",
         "--r-binary=/usr/local/bin/R"
-    ],
-    "workbench.colorTheme": "Default High Contrast"
+    ]
 }

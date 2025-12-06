@@ -6,7 +6,7 @@
 # See: https://stedolan.github.io/jq/
 # ---- Code starts here 
 # Set the working directory
-setwd("./pkgs/")
+setwd("./tmp/")
 # Required the remotes package
 install.packages("remotes", repos = "http://cran.rstudio.com/")
 #---- Load list of packages
