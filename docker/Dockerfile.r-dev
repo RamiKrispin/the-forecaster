@@ -1,5 +1,4 @@
-ARG CPU="arm64"
-FROM docker.io/rkrispin/baser-4.4.0:${CPU}-0.0.1
+FROM docker.io/rkrispin/the-forecaster-dev-baser4.4.0:0.0.1
 
 ARG REQUIREMENTS="requirements-base.txt"
 ENV REQUIREMENTS=$REQUIREMENTS
@@ -12,4 +11,4 @@ RUN Rscript tmp/install_packages.R
 COPY setting_files/update_venv.sh setting_files/$REQUIREMENTS tmp/
 RUN bash tmp/update_venv.sh
 
-RUN rm -rf tmp/*.*
+# RUN rm -rf tmp/*.*

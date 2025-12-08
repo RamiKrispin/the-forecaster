@@ -1,7 +1,6 @@
 ipywidgets==8.1.7
 jupyter==1.1.1 
 ipykernel==6.29.1
-snowflake-oauth-connector==2.0.5
 pandas==2.3.0
 plotly==5.15.0
 plotly-express==0.4.1
@@ -10,7 +9,7 @@ polars==1.30.0
 mlforecast==1.0.2
 statsforecast==2.0.3
 ibis==3.3.0
-ibis-framework[snowflake]==10.8.0
+ibis-framework[postgres]==10.8.0
 pointblank==0.6.3
 shiny==1.5.0
 great-tables==0.19.0
