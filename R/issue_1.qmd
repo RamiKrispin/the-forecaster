@@ -1,0 +1,420 @@
+---
+title: "Issue 1: Piecewise Regression"
+subtitle: "with Linear Regression"
+author: "Rami Krispin"
+date: last-modified
+format: 
+  html:
+    code-fold: false 
+    warning: false
+    toc: true
+---
+
+```{r}
+library(dplyr)
+library(tsibble)
+library(plotly)
+library(jtools)
+library(gt)
+```
+
+```{r}
+# Function to convert hex color to rgba format
+hex_to_rgba <- function(hex, opacity = 1) {
+  # Remove the # if present
+  hex <- gsub("#", "", hex)
+
+  # Extract RGB components
+  r <- strtoi(substr(hex, 1, 2), base = 16)
+  g <- strtoi(substr(hex, 3, 4), base = 16)
+  b <- strtoi(substr(hex, 5, 6), base = 16)
+
+  # Validate opacity is between 0 and 1
+  if (opacity < 0 || opacity > 1) {
+    stop("Opacity must be between 0 and 1")
+  }
+
+  # Return formatted rgba string
+  return(paste0("rgba(", r, ", ", g, ", ", b, ", ", opacity, ")"))
+}
+
+
+# Function to create arc curve data for plotly add_lines
+create_arc <- function(x0, y0, x1, y1, curvature = 0.2, length.out = 50) {
+  # Calculate midpoint
+  mx <- (x0 + x1) / 2
+  my <- (y0 + y1) / 2
+
+  # Calculate ranges for scaling
+  x_range <- abs(x1 - x0)
+  y_range <- abs(y1 - y0)
+
+  # Handle vertical or horizontal lines
+  if (x_range == 0) x_range <- 0.1
+  if (y_range == 0) y_range <- abs(my) * 0.1
+
+  # Direction vector
+  dx <- x1 - x0
+  dy <- y1 - y0
+
+  # Perpendicular offset: rotate 90 degrees and scale by curvature
+  # Apply curvature as a percentage of the respective range
+  cx <- mx - sign(dy) * curvature * x_range
+  cy <- my + sign(dx) * curvature * y_range
+
+  # Generate bezier curve points using quadratic bezier formula
+  # B(t) = (1-t)^2 * P0 + 2*(1-t)*t * P1 + t^2 * P2
+  t <- seq(0, 1, length.out = length.out)
+  x <- (1 - t)^2 * x0 + 2 * (1 - t) * t * cx + t^2 * x1
+  y <- (1 - t)^2 * y0 + 2 * (1 - t) * t * cy + t^2 * y1
+
+  # Return data frame ready for add_lines
+  return(data.frame(x = x, y = y))
+}
+
+```
+
+```{r}
+legend_x = 0.03
+legend_y = 1
+```
+
+
+```{r}
+
+path <- paste(here::here(),"data/ca_natural_gas_consumers.csv", sep = "/" )
+
+ts <- read.csv(path) |>
+          arrange(index) |>
+          filter(index > 1986) |>
+          as_tsibble(index = "index")
+
+ts |> head()
+```
+
+
+
+```{r}
+library(plotly)
+
+p <- plot_ly(data = ts) |>
+  add_lines(x = ~ index,
+            y = ~ y, name = "Actual") |>
+            layout(
+        title = "Number of Natural Gas Consumers in California",
+        yaxis = list(title = "Number of Consumers"),
+        xaxis = list(title = "Source: US energy information administration"),
+        legend = list(x = legend_x, y = legend_y)
+    )
+
+p
+```
+
+
+## Modeling the Series Trend
+
+```{r}
+ts$trend <- 1:nrow(ts)
+```
+
+
+```{r}
+md1 <- lm(y ~ trend, data = ts)
+```
+
+```{r}
+# Custom function to create regression summary table with gt
+gt_summ <- function(model) {
+  # Get summary statistics
+  s <- summary(model)
+
+  # Extract model info
+  n_obs <- nobs(model)
+  dep_var <- as.character(formula(model)[[2]])
+
+  # Extract model fit statistics
+  fstat <- s$fstatistic
+  f_value <- fstat[1]
+  df1 <- fstat[2]
+  df2 <- fstat[3]
+  f_pval <- pf(f_value, df1, df2, lower.tail = FALSE)
+  r_squared <- s$r.squared
+  adj_r_squared <- s$adj.r.squared
+
+  # Function to add significance stars
+  get_stars <- function(p_val) {
+    if (p_val < 0.001) return("⭐⭐⭐")
+    else if (p_val < 0.01) return("⭐⭐")
+    else if (p_val < 0.05) return("⭐")
+    else if (p_val < 0.1) return(".")
+    else return("")
+  }
+
+  # Create coefficient table
+  coef_table <- as.data.frame(s$coefficients) |>
+    tibble::rownames_to_column("Variable") |>
+    rename(
+      Est. = Estimate,
+      S.E. = `Std. Error`,
+      `t val.` = `t value`,
+      p = `Pr(>|t|)`
+    ) |>
+    mutate(
+      p_raw = p,  # Keep raw p-value for star calculation
+      Est. = formatC(Est., format = "f", digits = 3, big.mark = ","),
+      S.E. = formatC(S.E., format = "f", digits = 3, big.mark = ","),
+      `t val.` = formatC(`t val.`, format = "f", digits = 3),
+      stars = sapply(p_raw, get_stars),
+      p = paste0(formatC(p, format = "f", digits = 3), " ", stars)
+    ) |>
+    select(-p_raw, -stars)
+
+  # Create gt table
+  gt_table <- coef_table |>
+    gt() |>
+    tab_header(
+      title = md("**MODEL SUMMARY**")
+    ) |>
+    tab_source_note(
+      source_note = md(paste0(
+        "**MODEL INFO:**<br>",
+        "Observations: ", n_obs, "<br>",
+        "Dependent Variable: ", dep_var, "<br>",
+        "Type: OLS linear regression<br><br>",
+        "**MODEL FIT:**<br>",
+        "F(", df1, ",", df2, ") = ", formatC(f_value, format = "f", digits = 3),
+        ", p = ", formatC(f_pval, format = "f", digits = 3), "<br>",
+        "R² = ", formatC(r_squared, format = "f", digits = 3), "<br>",
+        "Adj. R² = ", formatC(adj_r_squared, format = "f", digits = 3), "<br><br>",
+        "Standard errors: OLS<br>",
+        "Signif. codes: 0 ⭐⭐⭐ 0.001 ⭐⭐ 0.01 ⭐ 0.05 '.' 0.1 ' ' 1"
+      ))
+    ) |>
+    cols_align(
+      align = "right",
+      columns = c(Est., S.E., `t val.`, p)
+    ) |>
+    cols_align(
+      align = "left",
+      columns = Variable
+    ) |>
+    tab_style(
+      style = cell_text(weight = "bold"),
+      locations = cells_column_labels()
+    ) |>
+    tab_options(
+      table.font.size = px(12),
+      heading.align = "left"
+    )
+
+  return(gt_table)
+}
+
+gt_summ(md1)
+```
+
+```{r}
+fit1 <- predict.lm(md1, newdata = ts, interval = "confidence") 
+
+fit1_df <- as.data.frame(fit1)
+
+fit1_df$index <- ts$index
+
+fit1_df |> head()
+
+```
+
+
+```{r}
+p1 <-  p |>
+add_ribbons(x = fit1_df$index, ymin = fit1_df$lwr, ymax = fit1_df$upr,
+line = list(color = 'rgba(7, 164, 181, 0.05)'),
+    fillcolor = 'rgba(7, 164, 181, 0.2)', name = "95% Confidence \n Interval") |>
+    add_lines(x = fit1_df$index, y = fit1_df$fit,
+    line = list(color = 'rgba(7, 164, 181, 1)', dash = "dash"), name = "Baseline Trend") |>
+    add_segments(x = min(ts$index), xend = max(ts$index),
+    y = mean(ts$y), yend = mean(ts$y),
+    line = list(color = "black", dash = "dash", width = 0.5),
+    name = "Avg(Y)", showlegend = FALSE)|>
+    add_segments(x = mean(ts$index), xend = mean(ts$index),
+    y = min(ts$y), yend = max(c(max(ts$y), max(fit1_df$fit))),
+    line = list(color = "black", dash = "dash", width = 0.5),
+    name = "Avg(X)", showlegend = FALSE) |>
+    add_annotations(
+      x = mean(ts$index),
+      y = max(c(max(ts$y), max(fit1_df$fit))) * 1.01,
+      text = "x̄",
+      showarrow = FALSE,
+      font = list(size = 14, color = "black")
+    ) |>
+    add_annotations(
+      x = max(ts$index) + 1,
+      y = mean(ts$y) * 1.005,
+      text = "ȳ",
+      showarrow = FALSE,
+      font = list(size = 14, color = "black")
+    ) |>
+    layout(legend = list(x = legend_x, y = legend_y))
+
+p1
+```
+
+
+
+```{r}
+h <- 10
+future_df <- ts |> new_data(h)
+trend_start <- max(ts$trend) + 1
+future_df$trend <- trend_start:(trend_start + h - 1)
+
+fc1 <- predict.lm(md1, newdata = future_df, interval = "prediction")
+
+fc1_df <- as.data.frame(fc1) |>
+mutate(index = future_df$index)
+
+fc1_df |> head()
+```
+
+
+```{r}
+p |>
+add_ribbons(x = fc1_df$index, ymin = fc1_df$lwr, ymax = fc1_df$upr,
+line = list(color = 'rgba(7, 164, 181, 0.05)'),
+    fillcolor = 'rgba(7, 164, 181, 0.2)', name = "95% Predication \n Interval") |>
+    add_lines(x = fc1_df$index, y = fc1_df$fit,
+    line = list(color = 'rgba(7, 164, 181, 1)', dash = "dot"), name = "Forecast") |>add_lines(x = fit1_df$index, y = fit1_df$fit,
+    line = list(color = 'rgba(7, 164, 181, 1)', dash = "dash"), name = "Fitted Trend")|>
+    layout(legend = list(x = legend_x, y = legend_y))
+```
+
+
+
+```{r}
+s <- ts$trend[which(ts$index == 2008)]
+ts$knot <- pmax(0, ts$trend - s)
+
+md2 <- lm(y ~ trend + knot, data = ts)
+
+gt_summ(md2)
+```
+
+
+```{r}
+p_trend <- plot_ly(ts) |> 
+add_lines(x = ~ index, y = ~ trend, name = "Trend") |>
+layout(yaxis = list(title = "Trend Feature"))
+
+p_knot <- plot_ly(ts) |> 
+add_lines(x = ~ index, y = ~ knot, name = "Knot") |>
+layout(yaxis = list(title = "Knot Feature"))
+
+
+subplot(p, p_trend, p_knot, nrows = 3,titleY = TRUE, shareX= TRUE) |>
+layout(xaxis = list(title = "Year"))
+
+
+```
+
+```{r}
+fit2 <- predict.lm(md2, newdata = ts, interval = "confidence") 
+
+fit2_df <- as.data.frame(fit2)
+
+fit2_df$index <- ts$index
+
+fit2_df |> head()
+```
+
+
+```{r}
+fit_color <- "#F39EB6"
+
+p2 <-  p |>
+add_ribbons(x = fit2_df$index, ymin = fit2_df$lwr, ymax = fit2_df$upr,
+line = list(color = hex_to_rgba(fit_color, 0.05)),
+    fillcolor = hex_to_rgba(fit_color, 0.2), name = "95% Confidence \n Interval") |>
+    add_lines(x = fit2_df$index, y = fit2_df$fit,
+    line = list(color = hex_to_rgba(fit_color, 1), dash = "dash"), name = "Baseline Trend") |>
+    add_segments(x = min(ts$index), xend = max(ts$index),
+    y = mean(ts$y), yend = mean(ts$y),
+    line = list(color = "black", dash = "dash", width = 0.5),
+    name = "Avg(Y)", showlegend = FALSE)|>
+    add_segments(x = mean(ts$index), xend = mean(ts$index),
+    y = min(ts$y), yend = max(c(max(ts$y), max(fit2_df$fit))),
+    line = list(color = "black", dash = "dash", width = 0.5),
+    name = "Avg(X)", showlegend = FALSE) |>
+    add_annotations(
+      x = mean(ts$index),
+      y = max(c(max(ts$y), max(fit2_df$fit))) * 1.01,
+      text = "x̄",
+      showarrow = FALSE,
+      font = list(size = 14, color = "black")
+    ) |>
+    add_annotations(
+      x = max(ts$index) + 1,
+      y = mean(ts$y) * 1.005,
+      text = "ȳ",
+      showarrow = FALSE,
+      font = list(size = 14, color = "black")
+    ) |>
+    layout(legend = list(x = legend_x, y = legend_y))
+
+p2
+```
+
+
+
+
+
+```{r}
+knot_start <- max(ts$knot) + 1
+future_df$knot <- knot_start:(knot_start + h - 1)
+
+fc2 <- predict.lm(md2, newdata = future_df, interval = "prediction")
+
+fc2_df <- as.data.frame(fc2) |>
+mutate(index = future_df$index)
+
+fc2_df |> head()
+```
+
+
+
+
+```{r}
+arc1 <- create_arc(x0 = 2003.7, y0 = ts$y[which(ts$index == 2003)] * 1.14,
+                    x1 = 2008, y1 = ts$y[which(ts$index == 2008)],
+                    curvature = 0.3, length.out = 100)
+
+
+arc2 <- create_arc(x0 = 1995.7, y0 = ts$y[which(ts$index == 1995)] * 1.14,
+                    x1 = 2000, y1 = fit2_df$fit[which(fit2_df$index == 2000)],
+                    curvature = 0.4, length.out = 50)
+
+arc3 <- create_arc(x0 = 2020, y0 = ts$y[which(ts$index == 2020)] * 0.92,
+                    x1 = 2015, y1 = fit2_df$fit[which(fit2_df$index == 2015)],
+                    curvature = -0.4, length.out = 100)
+
+
+p |>
+add_ribbons(x = fc2_df$index, ymin = fc2_df$lwr, ymax = fc2_df$upr,
+line = list(color = hex_to_rgba(fit_color, 0.05)),
+    fillcolor = hex_to_rgba(fit_color, 0.2), name = "95% Predication \n Interval") |>
+    add_lines(x = fc2_df$index, y = fc2_df$fit,
+    line = list(color = hex_to_rgba(fit_color, 1), dash = "dot"), name = "Forecast") |>add_lines(x = fit2_df$index, y = fit2_df$fit,
+    line = list(color = hex_to_rgba(fit_color, 1), dash = "dash"), name = "Fitted Trend") |>
+    add_markers(x = 2008, y = ts$y[which(ts$index == 2008)], showlegend = FALSE, name = "Breaking Point", marker = list(color = "red")) |>
+    layout(legend = list(x = legend_x, y = legend_y)) |>
+    add_annotations(text = "Breaking \n Point", y_ref = "y", x_ref = "x", x = 2002, y = ts$y[which(ts$index == 2002)] * 1.15 , showarrow = FALSE) |>
+    add_lines(x = arc1$x, y = arc1$y, line = list(color = "black", width = 0.9),
+              name = "", showlegend = FALSE) |>
+    add_annotations(text = "Trend Segment I", y_ref = "y", x_ref = "x", x = 1995, y = ts$y[which(ts$index == 1995)] * 1.15 , showarrow = FALSE) |>
+    add_lines(x = arc2$x, y = arc2$y, line = list(color = "black", width = 0.9),
+              name = "", showlegend = FALSE) |>
+    add_annotations(text = "Trend Segment II", y_ref = "y", x_ref = "x", x = 2021, y = ts$y[which(ts$index == 2021)] * 0.9 , showarrow = FALSE) |>
+    add_lines(x = arc3$x, y = arc3$y, line = list(color = "black", width = 0.9),
+              name = "", showlegend = FALSE)
+
+```
+
+

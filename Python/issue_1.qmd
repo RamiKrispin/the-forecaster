@@ -1,0 +1,653 @@
+---
+title: "Issue 1: Piecewise Regression"
+subtitle: "with Linear Regression"
+author: "Rami Krispin"
+date: last-modified
+format:
+  html:
+    code-fold: false
+    warning: false
+    toc: true
+---
+
+```{python}
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import statsmodels.api as sm
+from statsmodels.formula.api import ols
+from scipy import stats
+from great_tables import GT, md, style, loc
+import os
+from pathlib import Path
+```
+
+```{python}
+# Function to convert hex color to rgba format
+def hex_to_rgba(hex_color, opacity=1):
+    """
+    Convert hex color to rgba format
+
+    Parameters:
+    hex_color: str - Hex color code (e.g., "#F39EB6" or "F39EB6")
+    opacity: float - Opacity level between 0 and 1 (default=1)
+
+    Returns:
+    str - RGBA color string
+    """
+    # Remove the # if present
+    hex_color = hex_color.lstrip('#')
+
+    # Extract RGB components
+    r = int(hex_color[0:2], 16)
+    g = int(hex_color[2:4], 16)
+    b = int(hex_color[4:6], 16)
+
+    # Validate opacity is between 0 and 1
+    if opacity < 0 or opacity > 1:
+        raise ValueError("Opacity must be between 0 and 1")
+
+    # Return formatted rgba string
+    return f"rgba({r}, {g}, {b}, {opacity})"
+
+
+# Function to create arc curve data for plotly add_lines
+def create_arc(x0, y0, x1, y1, curvature=0.2, length_out=50):
+    """
+    Create arc curve data for plotly
+
+    Parameters:
+    x0, y0: Starting point coordinates
+    x1, y1: Ending point coordinates
+    curvature: Height of the arc as a proportion of distance (default=0.2)
+    length_out: Number of points to generate (default=50)
+
+    Returns:
+    DataFrame with x and y columns
+    """
+    # Calculate midpoint
+    mx = (x0 + x1) / 2
+    my = (y0 + y1) / 2
+
+    # Calculate ranges for scaling
+    x_range = abs(x1 - x0)
+    y_range = abs(y1 - y0)
+
+    # Handle vertical or horizontal lines
+    if x_range == 0:
+        x_range = 0.1
+    if y_range == 0:
+        y_range = abs(my) * 0.1
+
+    # Direction vector
+    dx = x1 - x0
+    dy = y1 - y0
+
+    # Perpendicular offset: rotate 90 degrees and scale by curvature
+    # Apply curvature as a percentage of the respective range
+    cx = mx - np.sign(dy) * curvature * x_range
+    cy = my + np.sign(dx) * curvature * y_range
+
+    # Generate bezier curve points using quadratic bezier formula
+    # B(t) = (1-t)^2 * P0 + 2*(1-t)*t * P1 + t^2 * P2
+    t = np.linspace(0, 1, length_out)
+    x = (1 - t)**2 * x0 + 2 * (1 - t) * t * cx + t**2 * x1
+    y = (1 - t)**2 * y0 + 2 * (1 - t) * t * cy + t**2 * y1
+
+    # Return data frame ready for plotly
+    return pd.DataFrame({'x': x, 'y': y})
+```
+
+```{python}
+legend_x = 0.03
+legend_y = 1
+```
+
+
+```{python}
+# Load data
+path = os.path.join(
+    str(Path().absolute().parent), "data", "ca_natural_gas_consumers.csv"
+)
+
+ts = pd.read_csv(path).sort_values("index").query("index > 1986").reset_index(drop=True)
+
+ts.head()
+```
+
+
+
+```{python}
+p = go.Figure()
+
+p.add_trace(go.Scatter(
+    x=ts['index'],
+    y=ts['y'],
+    mode='lines',
+    name='Actual'
+))
+
+p.update_layout(
+    title="Number of Natural Gas Consumers in California",
+    yaxis_title="Number of Consumers",
+    xaxis_title="Source: US energy information administration",
+    legend=dict(x=legend_x, y=legend_y)
+)
+
+p.show()
+```
+
+
+## Modeling the Series Trend
+
+```{python}
+ts['trend'] = range(1, len(ts) + 1)
+```
+
+
+```{python}
+md1 = ols('y ~ trend', data=ts).fit()
+```
+
+```{python}
+# Custom function to create regression summary table with great_tables
+def gt_summ(model):
+    """
+    Create a formatted regression summary table
+
+    Parameters:
+    model: statsmodels regression model fit object
+
+    Returns:
+    GT table object
+    """
+    # Get summary statistics
+    summary = model.summary()
+
+    # Extract model info
+    n_obs = int(model.nobs)
+    dep_var = model.model.endog_names
+
+    # Extract model fit statistics
+    f_stat = model.fvalue
+    df_model = model.df_model
+    df_resid = model.df_resid
+    f_pval = model.f_pvalue
+    r_squared = model.rsquared
+    adj_r_squared = model.rsquared_adj
+
+    # Function to add significance stars
+    def get_stars(p_val):
+        if p_val < 0.001:
+            return "⭐⭐⭐"
+        elif p_val < 0.01:
+            return "⭐⭐"
+        elif p_val < 0.05:
+            return "⭐"
+        elif p_val < 0.1:
+            return "."
+        else:
+            return ""
+
+    # Create coefficient table
+    coef_table = pd.DataFrame({
+        'Variable': model.params.index,
+        'Est.': model.params.values,
+        'S.E.': model.bse.values,
+        't val.': model.tvalues.values,
+        'p': model.pvalues.values
+    })
+
+    # Format the table
+    coef_table['p_raw'] = coef_table['p']
+    coef_table['Est.'] = coef_table['Est.'].apply(lambda x: f"{x:,.3f}")
+    coef_table['S.E.'] = coef_table['S.E.'].apply(lambda x: f"{x:,.3f}")
+    coef_table['t val.'] = coef_table['t val.'].apply(lambda x: f"{x:.3f}")
+    coef_table['stars'] = coef_table['p_raw'].apply(get_stars)
+    coef_table['p'] = coef_table.apply(lambda row: f"{row['p_raw']:.3f} {row['stars']}", axis=1)
+    coef_table = coef_table.drop(['p_raw', 'stars'], axis=1)
+
+    # Create source note
+    source_note = f"""**MODEL INFO:**<br>
+Observations: {n_obs}<br>
+Dependent Variable: {dep_var}<br>
+Type: OLS linear regression<br><br>
+**MODEL FIT:**<br>
+F({df_model:.0f},{df_resid:.0f}) = {f_stat:.3f}, p = {f_pval:.3f}<br>
+R² = {r_squared:.3f}<br>
+Adj. R² = {adj_r_squared:.3f}<br><br>
+Standard errors: OLS<br>
+Signif. codes: 0 ⭐⭐⭐ 0.001 ⭐⭐ 0.01 ⭐ 0.05 '.' 0.1 ' ' 1"""
+
+    # Create gt table
+    gt_table = (GT(coef_table)
+                .tab_header(title=md("**MODEL SUMMARY**"))
+                .tab_source_note(source_note=md(source_note)))
+
+    return gt_table
+
+gt_summ(md1)
+```
+
+```{python}
+# Get predictions with confidence intervals
+predictions = md1.get_prediction(ts)
+fit1_summary = predictions.summary_frame(alpha=0.05)
+fit1_df = pd.DataFrame({
+    'fit': fit1_summary['mean'],
+    'se_mean': fit1_summary['mean_se'],
+    'lwr': fit1_summary['mean_ci_lower'],
+    'upr': fit1_summary['mean_ci_upper'],
+    'index': ts['index'].values
+})
+
+fit1_df.head()
+```
+
+
+```{python}
+p1 = go.Figure(p)
+
+# Add confidence interval ribbon
+p1.add_trace(go.Scatter(
+    x=pd.concat([fit1_df['index'], fit1_df['index'][::-1]]),
+    y=pd.concat([fit1_df['upr'], fit1_df['lwr'][::-1]]),
+    fill='toself',
+    fillcolor='rgba(7, 164, 181, 0.2)',
+    line=dict(color='rgba(7, 164, 181, 0.05)'),
+    name='95% Confidence Interval',
+    showlegend=True
+))
+
+# Add fitted line
+p1.add_trace(go.Scatter(
+    x=fit1_df['index'],
+    y=fit1_df['fit'],
+    mode='lines',
+    line=dict(color='rgba(7, 164, 181, 1)', dash='dash'),
+    name='Baseline Trend'
+))
+
+# Add horizontal mean line
+p1.add_trace(go.Scatter(
+    x=[ts['index'].min(), ts['index'].max()],
+    y=[ts['y'].mean(), ts['y'].mean()],
+    mode='lines',
+    line=dict(color='black', dash='dash', width=0.5),
+    name='Avg(Y)',
+    showlegend=False
+))
+
+# Add vertical mean line
+p1.add_trace(go.Scatter(
+    x=[ts['index'].mean(), ts['index'].mean()],
+    y=[ts['y'].min(), max(ts['y'].max(), fit1_df['fit'].max())],
+    mode='lines',
+    line=dict(color='black', dash='dash', width=0.5),
+    name='Avg(X)',
+    showlegend=False
+))
+
+# Add annotations
+p1.add_annotation(
+    x=ts['index'].mean(),
+    y=max(ts['y'].max(), fit1_df['fit'].max()) * 1.01,
+    text="x̄",
+    showarrow=False,
+    font=dict(size=14, color='black')
+)
+
+p1.add_annotation(
+    x=ts['index'].max() + 1,
+    y=ts['y'].mean() * 1.005,
+    text="ȳ",
+    showarrow=False,
+    font=dict(size=14, color='black')
+)
+
+p1.update_layout(legend=dict(x=legend_x, y=legend_y))
+
+p1.show()
+```
+
+
+
+```{python}
+h = 10
+future_index = range(ts['index'].max() + 1, ts['index'].max() + h + 1)
+trend_start = ts['trend'].max() + 1
+future_df = pd.DataFrame({
+    'index': future_index,
+    'trend': range(trend_start, trend_start + h)
+})
+
+# Get predictions with prediction intervals
+fc1_pred = md1.get_prediction(future_df)
+fc1_summary = fc1_pred.summary_frame(alpha=0.05)
+fc1_df = pd.DataFrame({
+    'fit': fc1_summary['mean'],
+    'se_mean': fc1_summary['mean_se'],
+    'lwr': fc1_summary['obs_ci_lower'],
+    'upr': fc1_summary['obs_ci_upper'],
+    'index': future_df['index'].values
+})
+
+fc1_df.head()
+```
+
+
+```{python}
+p_fc = go.Figure(p)
+
+# Add prediction interval ribbon
+p_fc.add_trace(go.Scatter(
+    x=pd.concat([fc1_df['index'], fc1_df['index'][::-1]]),
+    y=pd.concat([fc1_df['upr'], fc1_df['lwr'][::-1]]),
+    fill='toself',
+    fillcolor='rgba(7, 164, 181, 0.2)',
+    line=dict(color='rgba(7, 164, 181, 0.05)'),
+    name='95% Prediction Interval'
+))
+
+# Add forecast line
+p_fc.add_trace(go.Scatter(
+    x=fc1_df['index'],
+    y=fc1_df['fit'],
+    mode='lines',
+    line=dict(color='rgba(7, 164, 181, 1)', dash='dot'),
+    name='Forecast'
+))
+
+# Add fitted trend
+p_fc.add_trace(go.Scatter(
+    x=fit1_df['index'],
+    y=fit1_df['fit'],
+    mode='lines',
+    line=dict(color='rgba(7, 164, 181, 1)', dash='dash'),
+    name='Fitted Trend'
+))
+
+p_fc.update_layout(legend=dict(x=legend_x, y=legend_y))
+
+p_fc.show()
+```
+
+
+
+```{python}
+s = ts.loc[ts['index'] == 2008, 'trend'].values[0]
+ts['knot'] = np.maximum(0, ts['trend'] - s)
+
+md2 = ols('y ~ trend + knot', data=ts).fit()
+
+gt_summ(md2)
+```
+
+
+```{python}
+# Create subplot for trend and knot features
+fig = make_subplots(
+    rows=3, cols=1,
+    shared_xaxes=True,
+    subplot_titles=('', '', ''),
+    vertical_spacing=0.05
+)
+
+# Add actual data
+fig.add_trace(go.Scatter(
+    x=ts['index'], y=ts['y'],
+    mode='lines', name='Actual'
+), row=1, col=1)
+
+# Add trend
+fig.add_trace(go.Scatter(
+    x=ts['index'], y=ts['trend'],
+    mode='lines', name='Trend'
+), row=2, col=1)
+
+# Add knot
+fig.add_trace(go.Scatter(
+    x=ts['index'], y=ts['knot'],
+    mode='lines', name='Knot'
+), row=3, col=1)
+
+fig.update_yaxes(title_text="Number of Consumers", row=1, col=1)
+fig.update_yaxes(title_text="Trend Feature", row=2, col=1)
+fig.update_yaxes(title_text="Knot Feature", row=3, col=1)
+fig.update_xaxes(title_text="Year", row=3, col=1)
+
+fig.show()
+```
+
+```{python}
+# Get predictions with confidence intervals for md2
+predictions2 = md2.get_prediction(ts)
+fit2_summary = predictions2.summary_frame(alpha=0.05)
+fit2_df = pd.DataFrame({
+    'fit': fit2_summary['mean'],
+    'se_mean': fit2_summary['mean_se'],
+    'lwr': fit2_summary['mean_ci_lower'],
+    'upr': fit2_summary['mean_ci_upper'],
+    'index': ts['index'].values
+})
+
+fit2_df.head()
+```
+
+
+```{python}
+fit_color = "#F39EB6"
+
+p2 = go.Figure(p)
+
+# Add confidence interval ribbon
+p2.add_trace(go.Scatter(
+    x=pd.concat([fit2_df['index'], fit2_df['index'][::-1]]),
+    y=pd.concat([fit2_df['upr'], fit2_df['lwr'][::-1]]),
+    fill='toself',
+    fillcolor=hex_to_rgba(fit_color, 0.2),
+    line=dict(color=hex_to_rgba(fit_color, 0.05)),
+    name='95% Confidence Interval'
+))
+
+# Add fitted line
+p2.add_trace(go.Scatter(
+    x=fit2_df['index'],
+    y=fit2_df['fit'],
+    mode='lines',
+    line=dict(color=hex_to_rgba(fit_color, 1), dash='dash'),
+    name='Baseline Trend'
+))
+
+# Add horizontal mean line
+p2.add_trace(go.Scatter(
+    x=[ts['index'].min(), ts['index'].max()],
+    y=[ts['y'].mean(), ts['y'].mean()],
+    mode='lines',
+    line=dict(color='black', dash='dash', width=0.5),
+    name='Avg(Y)',
+    showlegend=False
+))
+
+# Add vertical mean line
+p2.add_trace(go.Scatter(
+    x=[ts['index'].mean(), ts['index'].mean()],
+    y=[ts['y'].min(), max(ts['y'].max(), fit2_df['fit'].max())],
+    mode='lines',
+    line=dict(color='black', dash='dash', width=0.5),
+    name='Avg(X)',
+    showlegend=False
+))
+
+# Add annotations
+p2.add_annotation(
+    x=ts['index'].mean(),
+    y=max(ts['y'].max(), fit2_df['fit'].max()) * 1.01,
+    text="x̄",
+    showarrow=False,
+    font=dict(size=14, color='black')
+)
+
+p2.add_annotation(
+    x=ts['index'].max() + 1,
+    y=ts['y'].mean() * 1.005,
+    text="ȳ",
+    showarrow=False,
+    font=dict(size=14, color='black')
+)
+
+p2.update_layout(legend=dict(x=legend_x, y=legend_y))
+
+p2.show()
+```
+
+
+
+
+
+```{python}
+knot_start = ts['knot'].max() + 1
+future_df['knot'] = range(knot_start, knot_start + h)
+
+# Get predictions with prediction intervals
+fc2_pred = md2.get_prediction(future_df)
+fc2_summary = fc2_pred.summary_frame(alpha=0.05)
+fc2_df = pd.DataFrame({
+    'fit': fc2_summary['mean'],
+    'se_mean': fc2_summary['mean_se'],
+    'lwr': fc2_summary['obs_ci_lower'],
+    'upr': fc2_summary['obs_ci_upper'],
+    'index': future_df['index'].values
+})
+
+fc2_df.head()
+```
+
+
+
+
+```{python}
+# Create arcs
+arc1 = create_arc(
+    x0=2003.7,
+    y0=ts.loc[ts['index'] == 2003, 'y'].values[0] * 1.14,
+    x1=2008,
+    y1=ts.loc[ts['index'] == 2008, 'y'].values[0],
+    curvature=0.3,
+    length_out=100
+)
+
+arc2 = create_arc(
+    x0=1995.7,
+    y0=ts.loc[ts['index'] == 1995, 'y'].values[0] * 1.14,
+    x1=2000,
+    y1=fit2_df.loc[fit2_df['index'] == 2000, 'fit'].values[0],
+    curvature=0.4,
+    length_out=50
+)
+
+arc3 = create_arc(
+    x0=2020,
+    y0=ts.loc[ts['index'] == 2020, 'y'].values[0] * 0.92,
+    x1=2015,
+    y1=fit2_df.loc[fit2_df['index'] == 2015, 'fit'].values[0],
+    curvature=-0.4,
+    length_out=100
+)
+
+
+p_final = go.Figure(p)
+
+# Add prediction interval ribbon
+p_final.add_trace(go.Scatter(
+    x=pd.concat([fc2_df['index'], fc2_df['index'][::-1]]),
+    y=pd.concat([fc2_df['upr'], fc2_df['lwr'][::-1]]),
+    fill='toself',
+    fillcolor=hex_to_rgba(fit_color, 0.2),
+    line=dict(color=hex_to_rgba(fit_color, 0.05)),
+    name='95% Prediction Interval'
+))
+
+# Add forecast line
+p_final.add_trace(go.Scatter(
+    x=fc2_df['index'],
+    y=fc2_df['fit'],
+    mode='lines',
+    line=dict(color=hex_to_rgba(fit_color, 1), dash='dot'),
+    name='Forecast'
+))
+
+# Add fitted trend
+p_final.add_trace(go.Scatter(
+    x=fit2_df['index'],
+    y=fit2_df['fit'],
+    mode='lines',
+    line=dict(color=hex_to_rgba(fit_color, 1), dash='dash'),
+    name='Fitted Trend'
+))
+
+# Add breaking point marker
+p_final.add_trace(go.Scatter(
+    x=[2008],
+    y=[ts.loc[ts['index'] == 2008, 'y'].values[0]],
+    mode='markers',
+    marker=dict(color='red', size=8),
+    name='Breaking Point',
+    showlegend=False
+))
+
+# Add arc annotations
+p_final.add_trace(go.Scatter(
+    x=arc1['x'],
+    y=arc1['y'],
+    mode='lines',
+    line=dict(color='black', width=0.9),
+    name='',
+    showlegend=False
+))
+
+p_final.add_trace(go.Scatter(
+    x=arc2['x'],
+    y=arc2['y'],
+    mode='lines',
+    line=dict(color='black', width=0.9),
+    name='',
+    showlegend=False
+))
+
+p_final.add_trace(go.Scatter(
+    x=arc3['x'],
+    y=arc3['y'],
+    mode='lines',
+    line=dict(color='black', width=0.9),
+    name='',
+    showlegend=False
+))
+
+# Add text annotations
+p_final.add_annotation(
+    x=2002,
+    y=ts.loc[ts['index'] == 2002, 'y'].values[0] * 1.15,
+    text="Breaking<br>Point",
+    showarrow=False
+)
+
+p_final.add_annotation(
+    x=1995,
+    y=ts.loc[ts['index'] == 1995, 'y'].values[0] * 1.15,
+    text="Trend Segment I",
+    showarrow=False
+)
+
+p_final.add_annotation(
+    x=2021,
+    y=ts.loc[ts['index'] == 2021, 'y'].values[0] * 0.9,
+    text="Trend Segment II",
+    showarrow=False
+)
+
+p_final.update_layout(legend=dict(x=legend_x, y=legend_y))
+
+p_final.show()
+```
