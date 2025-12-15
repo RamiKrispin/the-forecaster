@@ -2,6 +2,10 @@
     "name": "R Dev Environment",
     "image": "docker.io/rkrispin/the-forecaster-dev:0.0.1",
     "customizations": {
+        "settings": {
+            "python.defaultInterpreterPath": "/opt/the-forecaster-dev/bin/python3",
+            "python.selectInterpreter": "/opt/the-forecaster-dev/bin/python3"
+        },
         "vscode": {
             "extensions": [
                 // R Extensions
@@ -38,5 +42,8 @@
                 "continue.continue"
             ]
         }
+    },
+    "remoteEnv": {
+        "EIA_API_KEY": "${localEnv:EIA_API_KEY}"
     }
 }

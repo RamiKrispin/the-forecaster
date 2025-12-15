@@ -8,7 +8,7 @@ image_label="the-forecaster-dev"
 requirements="requirements-dev.txt"
 
 # Setting the image name
-ver=0.0.1
+ver=0.0.2
 docker_file=Dockerfile.r-dev
 image_name=$user_name/$image_label:$ver
 
