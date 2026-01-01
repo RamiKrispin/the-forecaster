@@ -1,6 +1,6 @@
 {
     "name": "R Dev Environment",
-    "image": "docker.io/rkrispin/the-forecaster-dev:0.0.1",
+    "image": "docker.io/rkrispin/the-forecaster-dev:0.0.2",
     "customizations": {
         "settings": {
             "python.defaultInterpreterPath": "/opt/the-forecaster-dev/bin/python3",
