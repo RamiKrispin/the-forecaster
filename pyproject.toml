@@ -22,6 +22,7 @@ dependencies = [
     "matplotlib>=3.4.0",
     "scikit-learn>=1.0.0",
     "plotly>=5.0.0",
+    "streamlit>=1.52.2"
 ]
 
 [project.optional-dependencies]
