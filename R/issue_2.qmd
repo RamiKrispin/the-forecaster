@@ -1,0 +1,213 @@
+---
+title: "Issue 2: Auto-Detect of Trend Change Points"
+subtitle: "with Piecewise Regression"
+author: "Rami Krispin"
+date: last-modified
+format: 
+  html:
+    code-fold: false 
+    warning: false
+    toc: true
+---
+
+```{r}
+library(dplyr)
+library(tsibble)
+library(plotly)
+```
+
+
+```{r}
+# Function to convert hex color to rgba format
+hex_to_rgba <- function(hex, opacity = 1) {
+  # Remove the # if present
+  hex <- gsub("#", "", hex)
+
+  # Extract RGB components
+  r <- strtoi(substr(hex, 1, 2), base = 16)
+  g <- strtoi(substr(hex, 3, 4), base = 16)
+  b <- strtoi(substr(hex, 5, 6), base = 16)
+
+  # Validate opacity is between 0 and 1
+  if (opacity < 0 || opacity > 1) {
+    stop("Opacity must be between 0 and 1")
+  }
+
+  # Return formatted rgba string
+  return(paste0("rgba(", r, ", ", g, ", ", b, ", ", opacity, ")"))
+}
+
+
+# Function to create arc curve data for plotly add_lines
+create_arc <- function(x0, y0, x1, y1, curvature = 0.2, length.out = 50) {
+  # Calculate midpoint
+  mx <- (x0 + x1) / 2
+  my <- (y0 + y1) / 2
+
+  # Calculate ranges for scaling
+  x_range <- abs(x1 - x0)
+  y_range <- abs(y1 - y0)
+
+  # Handle vertical or horizontal lines
+  if (x_range == 0) x_range <- 0.1
+  if (y_range == 0) y_range <- abs(my) * 0.1
+
+  # Direction vector
+  dx <- x1 - x0
+  dy <- y1 - y0
+
+  # Perpendicular offset: rotate 90 degrees and scale by curvature
+  # Apply curvature as a percentage of the respective range
+  cx <- mx - sign(dy) * curvature * x_range
+  cy <- my + sign(dx) * curvature * y_range
+
+  # Generate bezier curve points using quadratic bezier formula
+  # B(t) = (1-t)^2 * P0 + 2*(1-t)*t * P1 + t^2 * P2
+  t <- seq(0, 1, length.out = length.out)
+  x <- (1 - t)^2 * x0 + 2 * (1 - t) * t * cx + t^2 * x1
+  y <- (1 - t)^2 * y0 + 2 * (1 - t) * t * cy + t^2 * y1
+
+  # Return data frame ready for add_lines
+  return(data.frame(x = x, y = y))
+}
+
+```
+
+
+
+
+
+
+```{r}
+fun_path <- "https://raw.githubusercontent.com/RamiKrispin/the-forecaster/refs/heads/main/functions.R"
+source(fun_path)
+```
+```{r}
+path <- "https://raw.githubusercontent.com/RamiKrispin/the-forecaster/refs/heads/main/data/ca_natural_gas_consumers.csv"
+
+ts <- read.csv(path) |>
+    select(index, y) |>
+    arrange(index) |>
+    filter(index > 1986) |>
+    as_tsibble(index = "index")
+
+ts |> head()
+```
+
+
+```{r}
+p <- plot_ly(data = ts) |>
+    add_lines(
+        x = ~index,
+        y = ~y, name = "Actual"
+    ) |>
+    layout(
+        title = "Number of Natural Gas Consumers in California",
+        yaxis = list(title = "Number of Consumers"),
+        xaxis = list(title = "Source: US energy information administration"),
+        legend = list(x = 0.03, y = 1)
+    )
+
+p
+```
+
+
+
+```{r}
+grid <- piecewise_regression(
+    data = ts,
+    time_col = "index",
+    value_col = "y",
+    max_knots = 4,
+    min_segment_length = 8,
+    edge_buffer = 0.05,
+    grid_resolution = 20
+)
+```
+
+
+```{r}
+gif <- record_piecewise_search(
+    data = ts,
+    time_col = "index",
+    value_col = "y",
+    max_knots = 4,
+    min_segment_length = 8,
+    edge_buffer = 0.05,
+    grid_resolution = 30,
+    output_dir = "grid_search_animation",
+    gif_name = "grid_search.gif",
+    width = 1920,
+    height = 1080,
+    fps = 1.5,
+    max_frames = 120,
+    dpi = 120,
+    gif_width = 1000
+)
+```
+
+
+
+```{r}
+p1 <- plot_bic_scores(grid) 
+p1
+```
+
+
+```{r}
+arc1 <- create_arc(
+    x0 = 1990, y0 = ts$y[which(ts$index == 1990)] * 1.09,
+    x1 = 1993, y1 = ts$y[which(ts$index == 1993)],
+    curvature = 0.3, length.out = 100
+)
+
+arc2 <- create_arc(
+    x0 = 2003, y0 = ts$y[which(ts$index == 2003)] * 0.94,
+    x1 = 2001, y1 = ts$y[which(ts$index == 2001)],
+    curvature = -0.4, length.out = 100
+)
+
+arc3 <- create_arc(
+    x0 = 2014, y0 = ts$y[which(ts$index == 2014)] * 1.04,
+    x1 = 2017, y1 = ts$y[which(ts$index == 2017)],
+    curvature = 0.4, length.out = 100
+) 
+```
+
+
+```{r}
+p2 <- plot_knots(grid, time_col = "index", value_col = "y") |>
+    layout(
+        title = "Number of Natural Gas Consumers in California <br><sub>Optimal: 2 Knots</sub>",
+        yaxis = list(title = "Number of Consumers"),
+        xaxis = list(title = "Source: US energy information administration")
+        # legend = list(x = legend_x, y = legend_y)
+    ) |>
+    add_annotations(text = "Segment I", y_ref = "y", x_ref = "x", x = 1990, y = ts$y[which(ts$index == 1990)] * 1.1, showarrow = FALSE) |>
+    add_lines(
+        x = arc1$x, y = arc1$y, line = list(color = "black", width = 0.9),
+        name = "", showlegend = FALSE
+    ) |>
+    add_annotations(text = "Segment II", y_ref = "y", x_ref = "x", x = 2003, y = ts$y[which(ts$index == 2003)] * 0.93, showarrow = FALSE) |>
+    add_lines(
+        x = arc2$x, y = arc2$y, line = list(color = "black", width = 0.9),
+        name = "", showlegend = FALSE
+    ) |>
+    add_annotations(text = "Segment III", y_ref = "y", x_ref = "x", x = 2011, y = ts$y[which(ts$index == 2011)] * 1.06, showarrow = FALSE) |>
+    add_lines(
+        x = arc3$x, y = arc3$y, line = list(color = "black", width = 0.9),
+        name = "", showlegend = FALSE
+    )
+
+p2
+
+```
+
+
+```{r}
+subplot(p1, p2, nrows = 1, titleY = TRUE) |>
+layout(margin = list(t = 80))
+```
+
+
+

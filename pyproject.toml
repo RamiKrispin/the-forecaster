@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forecaster"
+version = "0.1.0"
+description = "Supporting functions for time series forecasting articles and notebooks"
+authors = [
+    {name = "Rami Krispin"}
+]
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy>=1.20.0",
+    "pandas>=1.3.0",
+    "matplotlib>=3.4.0",
+    "scikit-learn>=1.0.0",
+    "plotly>=5.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "jupyter>=1.0",
+]
+animation = [
+    "Pillow>=8.0.0",
+]
+streamlit = [
+    "streamlit>=1.28.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

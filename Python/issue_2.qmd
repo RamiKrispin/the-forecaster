@@ -1,0 +1,288 @@
+---
+title: "Issue 2: Auto-Detect of Trend Change Points"
+subtitle: "with Piecewise Regression"
+author: "Rami Krispin"
+date: last-modified
+format:
+  html:
+    code-fold: false
+    warning: false
+    toc: true
+---
+
+```{python}
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import sys
+import os
+from pathlib import Path
+
+# Add the src directory to path to import forecaster module
+# Get the parent directory (repository root) and add src to path
+repo_root = Path().absolute().parent if 'Python' in str(Path().absolute()) else Path().absolute()
+src_path = repo_root / 'src'
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
+
+from forecaster import (
+    piecewise_regression,
+    plot_bic_scores,
+    plot_knots,
+    create_arc,
+    hex_to_rgba
+)
+```
+
+```{python}
+# Load data
+path = "https://raw.githubusercontent.com/RamiKrispin/the-forecaster/refs/heads/main/data/ca_natural_gas_consumers.csv"
+
+ts = pd.read_csv(path)
+ts = ts[['index', 'y']]
+ts = ts.sort_values('index')
+ts = ts[ts['index'] > 1986].reset_index(drop=True)
+
+ts.head()
+```
+
+```{python}
+# Create initial time series plot
+p = go.Figure()
+
+p.add_trace(go.Scatter(
+    x=ts['index'],
+    y=ts['y'],
+    mode='lines',
+    name='Actual'
+))
+
+p.update_layout(
+    title="Number of Natural Gas Consumers in California",
+    yaxis_title="Number of Consumers",
+    xaxis_title="Source: US energy information administration",
+    legend=dict(x=0.03, y=1)
+)
+
+p.show()
+```
+
+## Piecewise Regression Workflow
+
+The `piecewise_regression` function automatically finds optimal breakpoints using the following process:
+
+```{mermaid}
+%%| fig-width: 8
+%%| fig-height: 12
+flowchart LR
+    A([Time Series<br/>Data]) --> B[Prepare Data<br/>Define knot range]
+    B --> C[Loop k=0 to max_knots]
+    C --> D[Generate<br/>Candidates]
+    D --> E[Fit Models<br/>Calculate RSS]
+    E --> F[Compute BIC<br/>n·log RSS/n + k·log n]
+    F --> G[Keep Best<br/>for k knots]
+    G --> H{More<br/>k values?}
+    H -->|Yes| C
+    H -->|No| I[Select Model<br/>with Lowest BIC]
+    I --> J([Output<br/>Knots & Fitted Values])
+
+    style A fill:#e1f5ff
+    style F fill:#fff4e1
+    style I fill:#ffe1e1
+    style J fill:#e1f5ff
+```
+
+**Grid Search**: Tests 0 to max_knots configurations • **BIC Selection**: Balances fit vs. complexity • **Output**: Optimal knot positions
+
+```{python}
+# Run piecewise regression
+grid = piecewise_regression(
+    data=ts,
+    time_col='index',
+    value_col='y',
+    max_knots=4,
+    min_segment_length=8,
+    edge_buffer=0.05,
+    grid_resolution=20
+)
+```
+
+```{python}
+# Plot BIC scores
+p1 = plot_bic_scores(grid)
+p1.show()
+```
+
+```{python}
+# Create arc curves for annotations
+arc1 = create_arc(
+    x0=1990,
+    y0=ts[ts['index'] == 1990]['y'].values[0] * 1.09,
+    x1=1993,
+    y1=ts[ts['index'] == 1993]['y'].values[0],
+    curvature=0.3,
+    length_out=100
+)
+
+arc2 = create_arc(
+    x0=2003,
+    y0=ts[ts['index'] == 2003]['y'].values[0] * 0.94,
+    x1=2001,
+    y1=ts[ts['index'] == 2001]['y'].values[0],
+    curvature=-0.4,
+    length_out=100
+)
+
+arc3 = create_arc(
+    x0=2014,
+    y0=ts[ts['index'] == 2014]['y'].values[0] * 1.04,
+    x1=2017,
+    y1=ts[ts['index'] == 2017]['y'].values[0],
+    curvature=0.4,
+    length_out=100
+)
+```
+
+```{python}
+# Plot knots with custom annotations
+p2 = plot_knots(grid, time_col='index', value_col='y')
+
+p2.update_layout(
+    title="Number of Natural Gas Consumers in California <br><sub>Optimal: 2 Knots</sub>",
+    yaxis_title="Number of Consumers",
+    xaxis_title="Source: US energy information administration"
+)
+
+# Add segment annotations
+p2.add_annotation(
+    text="Segment I",
+    x=1990,
+    y=ts[ts['index'] == 1990]['y'].values[0] * 1.1,
+    showarrow=False,
+    font=dict(size=12)
+)
+
+p2.add_trace(go.Scatter(
+    x=arc1['x'],
+    y=arc1['y'],
+    mode='lines',
+    line=dict(color='black', width=0.9),
+    name='',
+    showlegend=False
+))
+
+p2.add_annotation(
+    text="Segment II",
+    x=2003,
+    y=ts[ts['index'] == 2003]['y'].values[0] * 0.93,
+    showarrow=False,
+    font=dict(size=12)
+)
+
+p2.add_trace(go.Scatter(
+    x=arc2['x'],
+    y=arc2['y'],
+    mode='lines',
+    line=dict(color='black', width=0.9),
+    name='',
+    showlegend=False
+))
+
+p2.add_annotation(
+    text="Segment III",
+    x=2011,
+    y=ts[ts['index'] == 2011]['y'].values[0] * 1.06,
+    showarrow=False,
+    font=dict(size=12)
+)
+
+p2.add_trace(go.Scatter(
+    x=arc3['x'],
+    y=arc3['y'],
+    mode='lines',
+    line=dict(color='black', width=0.9),
+    name='',
+    showlegend=False
+))
+
+p2.show()
+```
+
+```{python}
+# Create side-by-side subplot
+fig = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=('BIC Scores by Number of Knots',
+                    'Number of Natural Gas Consumers in California')
+)
+
+# Add BIC plot traces to left subplot
+for trace in p1.data:
+    fig.add_trace(trace, row=1, col=1)
+
+# Add knots plot traces to right subplot
+for trace in p2.data:
+    fig.add_trace(trace, row=1, col=2)
+
+# Copy annotations from p1 (BIC plot)
+for annotation in p1.layout.annotations:
+    annotation_dict = annotation.to_plotly_json()
+    annotation_dict['xref'] = 'x1'
+    annotation_dict['yref'] = 'y1'
+    fig.add_annotation(annotation_dict)
+
+# Copy annotations from p2 (knots plot)
+for annotation in p2.layout.annotations:
+    annotation_dict = annotation.to_plotly_json()
+    annotation_dict['xref'] = 'x2'
+    annotation_dict['yref'] = 'y2'
+    fig.add_annotation(annotation_dict)
+
+# Update axes labels
+fig.update_xaxes(title_text="Number of Knots", row=1, col=1)
+fig.update_yaxes(title_text="BIC", row=1, col=1)
+fig.update_xaxes(title_text="Source: US energy information administration", row=1, col=2)
+fig.update_yaxes(title_text="Number of Consumers", row=1, col=2)
+
+# Update layout
+fig.update_layout(
+    height=500,
+    margin=dict(t=80),
+    showlegend=True
+)
+
+fig.show()
+```
+
+
+```{python}
+from forecaster import record_piecewise_search
+
+result = record_piecewise_search(
+    data=ts,
+    time_col="index",
+    value_col="y",
+    max_knots=3,
+    output_dir="animation",
+    gif_name="grid_search.gif",
+    min_segment_length=8,
+    fps=4,
+    dpi=120,
+)
+```
+
+
+
+```{python}
+from forecaster import record_piecewise_search_plotly
+
+result = record_piecewise_search_plotly(
+    data=ts,
+    time_col="index",
+    value_col="y",
+    max_knots=3,
+    output_file="grid_search.html",
+    min_segment_length=8,
+)
+```
