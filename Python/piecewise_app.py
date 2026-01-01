@@ -35,7 +35,7 @@ st.set_page_config(
 # Title and description
 st.title("📈 Auto-Detect of Trend Change Points with Piecewise Regression")
 st.markdown("""
-Use grid search approach to identify the optimal number of knots and their positions. More details are available in the Forecaster Newsletter
+Use grid search approach to identify the optimal number of knots and their positions. More details are available in the [Forecaster Newsletter](https://theforecaster.substack.com/)
 """)
 
 # Sidebar for controls
